@@ -23,14 +23,17 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.View;
+import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.samples.vision.face.facetracker.storage.PhotoSaver;
 import com.google.android.gms.vision.CameraSource;
 import com.google.android.gms.vision.MultiProcessor;
 import com.google.android.gms.vision.Tracker;
@@ -49,13 +52,14 @@ public final class FaceTrackerActivity extends AppCompatActivity {
     private static final String TAG = "FaceTracker";
 
     private CameraSource mCameraSource = null;
+    private boolean mInProgress;
 
     private CameraSourcePreview mPreview;
     private GraphicOverlay mGraphicOverlay;
 
     private static final int RC_HANDLE_GMS = 9001;
     // permission request codes need to be < 256
-    private static final int RC_HANDLE_CAMERA_PERM = 2;
+    private static final int RC_HANDLE_PERMISSIONS = 2;
 
     //==============================================================================================
     // Activity Methods
@@ -72,29 +76,34 @@ public final class FaceTrackerActivity extends AppCompatActivity {
         mPreview = (CameraSourcePreview) findViewById(R.id.preview);
         mGraphicOverlay = (GraphicOverlay) findViewById(R.id.faceOverlay);
 
-        // Check for the camera permission before accessing the camera.  If the
-        // permission is not granted yet, request permission.
-        int rc = ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA);
-        if (rc == PackageManager.PERMISSION_GRANTED) {
+        // Check for the camera and storage permission before accessing the camera.
+        // If the permission is not granted yet, request permission.
+        int cameraPermission = ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA);
+        int storagePermission = ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        if (cameraPermission == PackageManager.PERMISSION_GRANTED
+                && storagePermission == PackageManager.PERMISSION_GRANTED) {
             createCameraSource();
         } else {
-            requestCameraPermission();
+            requestCameraAndStoragePermission();
         }
     }
 
     /**
-     * Handles the requesting of the camera permission.  This includes
-     * showing a "Snackbar" message of why the permission is needed then
-     * sending the request.
+     * Handles the requesting of the camera and storage permission.
+     * This includes showing a "Snackbar" message of why the permission
+     * is needed then sending the request.
      */
-    private void requestCameraPermission() {
+    private void requestCameraAndStoragePermission() {
         Log.w(TAG, "Camera permission is not granted. Requesting permission");
 
-        final String[] permissions = new String[]{Manifest.permission.CAMERA};
+        final String[] permissions = new String[]{
+                Manifest.permission.CAMERA,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+        };
 
         if (!ActivityCompat.shouldShowRequestPermissionRationale(this,
                 Manifest.permission.CAMERA)) {
-            ActivityCompat.requestPermissions(this, permissions, RC_HANDLE_CAMERA_PERM);
+            ActivityCompat.requestPermissions(this, permissions, RC_HANDLE_PERMISSIONS);
             return;
         }
 
@@ -104,7 +113,7 @@ public final class FaceTrackerActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 ActivityCompat.requestPermissions(thisActivity, permissions,
-                        RC_HANDLE_CAMERA_PERM);
+                        RC_HANDLE_PERMISSIONS);
             }
         };
 
@@ -144,7 +153,7 @@ public final class FaceTrackerActivity extends AppCompatActivity {
 
         mCameraSource = new CameraSource.Builder(context, detector)
                 .setRequestedPreviewSize(640, 480)
-                .setFacing(CameraSource.CAMERA_FACING_BACK)
+                .setFacing(CameraSource.CAMERA_FACING_FRONT)
                 .setRequestedFps(30.0f)
                 .build();
     }
@@ -197,8 +206,8 @@ public final class FaceTrackerActivity extends AppCompatActivity {
      * @see #requestPermissions(String[], int)
      */
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode != RC_HANDLE_CAMERA_PERM) {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        if (requestCode != RC_HANDLE_PERMISSIONS) {
             Log.d(TAG, "Got unexpected permission result: " + requestCode);
             super.onRequestPermissionsResult(requestCode, permissions, grantResults);
             return;
@@ -301,6 +310,17 @@ public final class FaceTrackerActivity extends AppCompatActivity {
         public void onUpdate(FaceDetector.Detections<Face> detectionResults, Face face) {
             mOverlay.add(mFaceGraphic);
             mFaceGraphic.updateFace(face);
+            if (!mInProgress && face.getIsSmilingProbability() > 0.90) {
+                mInProgress = true;
+                mCameraSource.takePicture(null, new CameraSource.PictureCallback() {
+                    @Override
+                    public void onPictureTaken(byte[] bytes) {
+                        Toast.makeText(FaceTrackerActivity.this, ":)", Toast.LENGTH_SHORT).show();
+                        PhotoSaver.save(bytes, "smileshot");
+                        mInProgress = false;
+                    }
+                });
+            }
         }
 
         /**
